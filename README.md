@@ -18,9 +18,8 @@ P/OS V3.2 &nbsp;·&nbsp; PDP-11 (F-11 / J-11) &nbsp;·&nbsp; LK201 keyboard
 
 </div>
 
-NC is a two-panel file manager in the style of Norton Commander, ported
-from RSX-11M-PLUS (`~/Source/pdp11_rsx_nc`) to the DEC Professional
-350/380 under P/OS V3.2.
+NC is a two-panel file manager in the style of Norton Commander for the
+DEC Professional 350/380 under P/OS V3.2.
 
 The sources are Oregon Software Pascal-2 (`nc.pas`) and MACRO-11
 (`ncio.mac`). Pascal-2 is not available on P/OS, so the task is built on
@@ -37,9 +36,7 @@ Either application must be active, since NC relies on the PIP and EDT
 tasks they install.
 
 
-## Differences from the RSX version
-
-### Keys
+## Keys
 
 The Pro terminal handles F1-F5 (Hold Screen, Print Screen, Set-Up, F4,
 Break) itself and does not pass them to programs, so NC uses Help and
@@ -74,7 +71,7 @@ name:
 ESC followed by a digit also selects a function: ESC 1 is F1, ESC 0 is
 F10.
 
-### Commands
+## Commands
 
 P/OS has no MCR, and DCL does not accept commands from another task.
 NC translates common DCL verbs into commands for MMV and PIP, the tasks
@@ -98,7 +95,7 @@ opens it in the viewer.
 
 The default directory follows the active panel and is restored on exit.
 
-### Task size
+## Task size
 
 The task must fit in 32K words and leave free space for the Pascal-2 runtime
 at start-up. NC is compiled with `/NOWALKBACK/NOCHECK`, which saves
@@ -120,8 +117,8 @@ scripts in `~/DEC`:
     ./build.sh                          # upload, @NCMAKE, fetch NC.TSK
     ../posdeploy.sh posnc/NC.TSK        # transfer to the Pro (run from ~/DEC)
 
-Sources are built in `DB0:[NCPOS]`, separate from the RSX version in
-`DB0:[NC]`. `NCBLD.CMD` sets `UNITS=16`; `ncio.mac` uses LUNs 13-15.
+Sources are built in `DB0:[NCPOS]`. `NCBLD.CMD` sets `UNITS=16`;
+`ncio.mac` uses LUNs 13-15.
 
 `posdeploy.sh` requires the Pro at a DCL `$` prompt. It starts Kermit-11
 RECEIVE on the Pro and sends the file with `ksend.py` over the comm-port
