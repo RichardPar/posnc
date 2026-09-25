@@ -1,0 +1,340 @@
+        .title  ncio    Norton Commander support routines
+        .ident  /V01.00/
+        .enabl  lc
+;
+; Low level support for NC.PAS (Oregon Software Pascal-2), P/OS version.
+; Built with Pascal-2 on RSX-11M-PLUS; the task runs under P/OS V3.2.
+; Assemble with:  MAC NCIO=NCIO   (Pascal-2 macros come from [PAS]PASMAC)
+; Task build with UNITS=16 (LUNs 13-15 are used here).
+;
+        .include /SY:[PAS]PASMAC.MAC/
+; Terminal:     ttinit, ttgetc, ttput, ttsize, ttnbr
+; Files-11:     fsalun, fsglun, fsqio
+; File reading: vopen, vget, vclose
+; Misc:         r50asc, spawn, gtime
+;
+        .mcall  filio$,ttsym$
+        .mcall  qiow$s,alun$s,glun$s,spwn$s,wtse$s,gtim$s
+        .mcall  fdbdf$,fdop$a,fsrsz$,ofid$r,get$,close$
+        filio$
+        ttsym$
+
+io.ral  =       io.rlb!tf.ral           ; read pass-all
+io.wal  =       io.wlb!tf.wal           ; write pass-all
+
+vwlun   =       13.                     ; file viewer LUN
+ttlun   =       14.                     ; terminal LUN
+fslun   =       15.                     ; file system LUN
+ttefn   =       22.
+fsefn   =       23.
+spefn   =       24.
+
+        fsrsz$  1
+
+        .psect  ncdata,d,rw,con
+iosb:   .blkw   2
+tchr:   .blkw   1
+esb:    .blkw   8.
+tmp1:   .blkw   1
+tmp2:   .blkw   1
+qpar:   .blkw   1
+qp2:    .blkw   1
+qp3:    .blkw   1
+qp4:    .blkw   1
+qp5:    .blkw   1
+qp6:    .blkw   1
+glbuf:  .blkw   6
+gmcbuf: .byte   tc.wid,0,tc.lpp,0
+nbrbuf: .byte   tc.nbr,0
+atl:    .byte   0,0                     ; attribute list, one entry
+atladr: .word   0
+        .word   0
+; Name of the task spawned by spawn(): "..." plus a second RAD50 word
+; chosen by the caller.  P/OS has no MCR, so NC dispatches a command the
+; way MCR would, to the installed task named after its verb.
+spwnam: .rad50  /.../
+spwnm2: .word   0
+        .even
+vwfdb:  fdbdf$
+        fdop$a  vwlun
+
+        .psect  ncode,i,ro,con
+
+;
+; procedure ttinit;
+; Assign the terminal LUN to TI: and attach it.
+;
+        proc    ttinit
+        save    <r0>
+        begin
+        alun$s  #ttlun,#"TI,#0
+        qiow$s  #io.att,#ttlun,#ttefn,,#iosb
+        endpr
+
+;
+; function ttgetc: integer;
+; Read one character, no echo, pass-all.  Returns the character code,
+; or -1 on error.
+;
+        func    ttgetc,res,integer
+        save    <r0>
+        begin
+        clr     tchr
+        qiow$s  #io.ral!tf.rne,#ttlun,#ttefn,,#iosb,,<#tchr,#1>
+        movb    tchr,r0
+        bic     #177400,r0
+        tstb    iosb
+        bpl     1$
+        mov     #-1,r0
+1$:     mov     r0,res(sp)
+        endpr
+
+;
+; procedure ttput(var buf: anything; len: integer);
+; Write len bytes pass-all (no carriage control, no translation).
+;
+        proc    ttput
+        param   buf,address
+        param   len,integer
+        save    <r0>
+        begin
+        mov     buf(sp),tmp1
+        mov     len(sp),tmp2
+        ble     1$
+        qiow$s  #io.wal,#ttlun,#ttefn,,#iosb,,<tmp1,tmp2,#0>
+1$:
+        endpr
+
+;
+; procedure ttsize(var width, lines: integer);
+; Return terminal width and page length (0 if unknown).
+;
+        proc    ttsize
+        param   wid,address
+        param   lpp,address
+        save    <r0,r1>
+        begin
+        clrb    gmcbuf+1
+        clrb    gmcbuf+3
+        qiow$s  #sf.gmc,#ttlun,#ttefn,,#iosb,,<#gmcbuf,#4>
+        movb    gmcbuf+1,r0
+        bic     #177400,r0
+        mov     wid(sp),r1
+        mov     r0,(r1)
+        movb    gmcbuf+3,r0
+        bic     #177400,r0
+        mov     lpp(sp),r1
+        mov     r0,(r1)
+        endpr
+
+;
+; function ttnbr(val: integer): integer;
+; Set the terminal's no-broadcast characteristic (1 = refuse broadcast
+; messages, 0 = accept them).  Returns the previous setting.
+;
+        func    ttnbr,res,integer
+        param   val,integer
+        save    <r0>
+        begin
+        clrb    nbrbuf+1
+        qiow$s  #sf.gmc,#ttlun,#ttefn,,#iosb,,<#nbrbuf,#2>
+        movb    nbrbuf+1,r0
+        bic     #177400,r0
+        mov     r0,res(sp)
+        movb    val(sp),nbrbuf+1
+        qiow$s  #sf.smc,#ttlun,#ttefn,,#iosb,,<#nbrbuf,#2>
+        endpr
+
+;
+; function fsalun(dev, unit: integer): integer;
+; Assign the file system and viewer LUNs.  dev is two ASCII characters
+; packed low byte first.  Returns the directive status.
+;
+        func    fsalun,res,integer
+        param   dev,integer
+        param   unit,integer
+        save    <r0>
+        begin
+        mov     dev(sp),tmp1
+        mov     unit(sp),tmp2
+        alun$s  #vwlun,tmp1,tmp2
+        alun$s  #fslun,tmp1,tmp2
+        mov     $dsw,res(sp)
+        endpr
+
+;
+; procedure fsglun(var dev, unit: integer);
+; Return the physical device the file system LUN is assigned to
+; (resolves pseudo devices such as SY:).
+;
+        proc    fsglun
+        param   dev,address
+        param   unit,address
+        save    <r0>
+        begin
+        glun$s  #fslun,#glbuf
+        mov     dev(sp),r0
+        mov     glbuf,(r0)
+        mov     unit(sp),r0
+        movb    glbuf+2,(r0)+
+        clrb    (r0)
+        endpr
+
+;
+; function fsqio(fn: integer; var fnb: fnblock; code, size: integer;
+;                var buf: anything; p3, p4, p5, p6: integer): integer;
+; Issue an ACP QIO on the file system LUN.  P1 is the address of fnb
+; (a file ID, or a filename block starting with one), P2 an attribute
+; list holding one entry (code,size,buf), or 0 when code is 0.  If p6
+; is 1, P6 is the address of fnb too; if p6 is 2, P6 is the address of
+; fnb and P1 is 0 (as needed by IO.FNA).
+; Returns 1 on success, else the negative error code.
+;
+        func    fsqio,res,integer
+        param   fn,integer
+        param   fid,address
+        param   code,integer
+        param   size,integer
+        param   buf,address
+        param   p3,integer
+        param   p4,integer
+        param   p5,integer
+        param   p6,integer
+        save    <r0,r1>
+        begin
+        mov     #qpar,r1
+        mov     fid(sp),(r1)+
+        clr     (r1)
+        movb    code(sp),atl
+        beq     1$
+        mov     #atl,(r1)
+1$:     tst     (r1)+
+        movb    size(sp),atl+1
+        mov     buf(sp),atladr
+        mov     p3(sp),(r1)+
+        mov     p4(sp),(r1)+
+        mov     p5(sp),(r1)+
+        mov     p6(sp),(r1)
+        cmp     (r1),#1
+        beq     3$
+        cmp     (r1),#2
+        bne     2$
+        clr     qpar
+3$:     mov     fid(sp),(r1)
+2$:     mov     fn(sp),tmp1
+        qiow$s  tmp1,#fslun,#fsefn,,#iosb,,<qpar,qp2,qp3,qp4,qp5,qp6>
+        mov     $dsw,r0
+        bmi     4$
+        movb    iosb,r0
+4$:     mov     r0,res(sp)
+        endpr
+
+;
+; function vopen(var fid: fileid): integer;
+; Open a file for reading by file ID, on the device last given to
+; fsalun.  Returns 1 on success, else the negative FCS error code.
+;
+        func    vopen,res,integer
+        param   fid,address
+        save    <r0,r1,r2>
+        begin
+        mov     fid(sp),r1
+        mov     #vwfdb+f.fnb+n.fid,r2
+        mov     (r1)+,(r2)+
+        mov     (r1)+,(r2)+
+        mov     (r1)+,(r2)+
+        ofid$r  #vwfdb
+        mov     #1,r1
+        bcc     1$
+        movb    f.err(r0),r1
+1$:     mov     r1,res(sp)
+        endpr
+
+;
+; function vget(var buf: anything; size: integer; var len: integer): integer;
+; Read the next record of the open file into buf (at most size bytes).
+; Returns 1 on success, -10 (IE.EOF) at end of file, else the error.
+;
+        func    vget,res,integer
+        param   buf,address
+        param   size,integer
+        param   len,address
+        save    <r0,r1,r2>
+        begin
+        mov     buf(sp),r1
+        mov     size(sp),r2
+        get$    #vwfdb,r1,r2
+        mov     #1,r1
+        bcc     1$
+        movb    f.err(r0),r1
+        cmp     r1,#ie.rbg              ; record too big: use what we got
+        bne     1$
+        mov     #1,r1
+1$:     mov     len(sp),r2
+        mov     f.nrbd(r0),(r2)
+        mov     r1,res(sp)
+        endpr
+
+;
+; procedure vclose;
+;
+        proc    vclose
+        save    <r0,r1,r2>
+        begin
+        close$  #vwfdb
+        endpr
+
+;
+; procedure gtime(var buf: timbuf);
+; Get the date and time (GTIM$): year-1900, month, day, hour, minute,
+; second, tick, ticks per second.
+;
+        proc    gtime
+        param   buf,address
+        save    <r0>
+        begin
+        mov     buf(sp),r0
+        gtim$s  r0
+        endpr
+
+;
+; procedure r50asc(w: integer; var s: packed array [1..3] of char);
+; Convert one RAD50 word to three ASCII characters.
+;
+        proc    r50asc
+        param   w,integer
+        param   s,address
+        save    <r0,r1,r2>
+        begin
+        mov     w(sp),r1
+        mov     s(sp),r0
+        call    $c5ta
+        endpr
+
+;
+; function spawn(var cmd: anything; len, tsk: integer): integer;
+; Pass a command line to task "...xxx", where tsk is xxx in RAD50,
+; and wait for it to finish.  The terminal is detached while the
+; command runs.  Returns the exit status (1 = success), or the negative
+; directive status if the spawn failed.
+;
+        func    spawn,res,integer
+        param   cmd,address
+        param   len,integer
+        param   tsk,integer
+        save    <r0>
+        begin
+        mov     cmd(sp),tmp1
+        mov     len(sp),tmp2
+        mov     tsk(sp),spwnm2
+        qiow$s  #io.det,#ttlun,#ttefn,,#iosb
+        spwn$s  #spwnam,,,,,#spefn,,#esb,tmp1,tmp2
+        mov     $dsw,r0
+        bmi     1$
+        wtse$s  #spefn
+        mov     esb,r0
+1$:     mov     r0,res(sp)
+        qiow$s  #io.att,#ttlun,#ttefn,,#iosb
+        endpr
+
+        .end
