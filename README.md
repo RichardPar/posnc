@@ -35,6 +35,9 @@ Run it from the DCL prompt of Command Language or PRO/Tool Kit:
 Either application must be active, since NC relies on the PIP and EDT
 tasks they install.
 
+`NC.TSK` is the built task image, ready to install on the Pro as
+described in [Installing on the Pro](#installing-on-the-pro).
+
 
 ## Keys
 
