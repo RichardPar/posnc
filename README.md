@@ -104,24 +104,40 @@ about 4K words.
 
 ## Building
 
-The build runs from Linux against an RSX-11M-PLUS host, using helper
-scripts in `~/DEC`:
+NC is built on RSX-11M-PLUS and the task image is copied to the Pro.
 
-| Script | Purpose |
-|---|---|
-| `rsxd.py` | Holds a logged-in session on the RSX terminal line (192.168.10.151:10001) |
-| `rsx.py` | Runs commands through that session |
-| `rsxput.py` | Uploads a text file via `PIP file=TI:` |
-| `rsxget.py` | Downloads a file via `DMP /HX` |
+### Requirements
 
-    ./build.sh                          # upload, @NCMAKE, fetch NC.TSK
-    ../posdeploy.sh posnc/NC.TSK        # transfer to the Pro (run from ~/DEC)
+* RSX-11M-PLUS with MACRO-11 and the Task Builder
+* Oregon Software Pascal-2 V2.1, with `PASLIB.OLB` in `LB:[1,1]` and
+  `PASMAC.MAC` in `SY:[PAS]`
+* A way to move files between the RSX host and the Pro
 
-Sources are built in `DB0:[NCPOS]`. `NCBLD.CMD` sets `UNITS=16`;
-`ncio.mac` uses LUNs 13-15.
+### Building on RSX
 
-`posdeploy.sh` requires the Pro at a DCL `$` prompt. It starts Kermit-11
-RECEIVE on the Pro and sends the file with `ksend.py` over the comm-port
-bridge. Task images are sent as contiguous files; P/OS rejects a
-non-contiguous image with "File is not a task image". Other files are
-sent as text.
+Copy `NC.PAS`, `NCIO.MAC`, `NCBLD.CMD` and `NCMAKE.CMD` into a directory
+on the RSX host, set that directory as the default, and run the command
+file:
+
+    >SET /DEF=DB0:[NCPOS]
+    >@NCMAKE
+
+`NCMAKE.CMD` runs these three steps:
+
+    >PAS NC=NC/NOWALKBACK/NOCHECK
+    >MAC NCIO=NCIO
+    >TKB @NCBLD
+
+The result is `NC.TSK`. `NCBLD.CMD` links against `LB:[1,1]PASLIB` and
+sets `UNITS=16`, because `ncio.mac` uses LUNs 13-15. Check `NC.MAP` to
+confirm the image size stays under 32K words (see [Task size](#task-size)).
+
+### Installing on the Pro
+
+The task image must be contiguous on the Pro. If it isn't, P/OS rejects
+it with "File is not a task image". Transfer `NC.TSK` in binary (fixed
+records) under a temporary name, then copy it to a contiguous file from
+DCL:
+
+    $ COPY/CONTIGUOUS NCTMP.TSK NC.TSK
+    $ DELETE NCTMP.TSK;*
