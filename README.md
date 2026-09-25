@@ -14,6 +14,8 @@ P/OS V3.2 &nbsp;·&nbsp; PDP-11 (F-11 / J-11) &nbsp;·&nbsp; LK201 keyboard
 +--------------------------------------------------------------------+
 ```
 
+<img src="snapshot_image_02.png" alt="NC running under P/OS in Xhomer: DW1:[USERFILES] in the left panel, the DW1:[0,0] master directory in the right" width="768">
+
 </div>
 
 NC is a two-panel file manager in the style of Norton Commander, ported
