@@ -49,10 +49,11 @@ nbrbuf: .byte   tc.nbr,0
 atl:    .byte   0,0                     ; attribute list, one entry
 atladr: .word   0
         .word   0
-; Name of the task spawned by spawn(): "..." plus a second RAD50 word
-; chosen by the caller.  P/OS has no MCR, so NC dispatches a command the
-; way MCR would, to the installed task named after its verb.
-spwnam: .rad50  /.../
+; Name of the task spawned by spawn(), two RAD50 words chosen by the
+; caller: "..." and the verb for an installed command task (P/OS has no
+; MCR, so NC dispatches a command the way MCR would), or "MCR" and "..."
+; for the MCR dispatcher on RSX.
+spwnam: .word   0
 spwnm2: .word   0
         .even
 vwfdb:  fdbdf$
@@ -312,21 +313,23 @@ vwfdb:  fdbdf$
         endpr
 
 ;
-; function spawn(var cmd: anything; len, tsk: integer): integer;
-; Pass a command line to task "...xxx", where tsk is xxx in RAD50,
-; and wait for it to finish.  The terminal is detached while the
+; function spawn(var cmd: anything; len, tsk1, tsk2: integer): integer;
+; Pass a command line to the task named by RAD50 words tsk1 and tsk2
+; (e.g. "..." "PIP" or "MCR" "..."), and wait for it to finish.  The terminal is detached while the
 ; command runs.  Returns the exit status (1 = success), or the negative
 ; directive status if the spawn failed.
 ;
         func    spawn,res,integer
         param   cmd,address
         param   len,integer
-        param   tsk,integer
+        param   tsk1,integer
+        param   tsk2,integer
         save    <r0>
         begin
         mov     cmd(sp),tmp1
         mov     len(sp),tmp2
-        mov     tsk(sp),spwnm2
+        mov     tsk1(sp),spwnam
+        mov     tsk2(sp),spwnm2
         qiow$s  #io.det,#ttlun,#ttefn,,#iosb
         spwn$s  #spwnam,,,,,#spefn,,#esb,tmp1,tmp2
         mov     $dsw,r0

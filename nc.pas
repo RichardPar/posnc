@@ -52,6 +52,10 @@ const
   iorat = 5632;         { IO.RAT  read attributes }
   ieeof = -10;          { IE.EOF }
   iensf = -26;          { IE.NSF }
+  ieins = -2;           { IE.INS  task not installed }
+  r50dots = -19588;     { RAD50 "..." }
+  r50mcr = 20938;       { RAD50 "MCR" }
+  notdcl = -999;        { status: only DCL itself can run the command }
   mfdnum = 4;           { file ID of the master file directory }
   maxdev = 24;          { devices in the F2 menu }
   maxunit = 7;          { highest unit number tried for each device }
@@ -132,8 +136,8 @@ var
   cmd: str;                     { command line }
   lastdef: str;                 { last directory given to SET /DEF }
   startdef: str;                { default directory when NC started }
-  exitst: integer;
   precmd: str;                  { run before a translated command }
+  mcrcmd: str;                  { the command for MCR, if MMV is absent }
   curdev, curunit: integer;     { device the FS LUNs are assigned to }
   hdr: block;
   fnb: fnblock;
@@ -164,7 +168,7 @@ function vget(var b: recbuf; size: integer; var len: integer): integer;
 procedure vclose; external;
 procedure gtime(var b: timbuf); external;
 procedure r50asc(w: integer; var s: str3); external;
-function spawn(var c: line; len, tsk: integer): integer; external;
+function spawn(var c: line; len, tsk1, tsk2: integer): integer; external;
 
 { ---- strings ---- }
 
@@ -1733,9 +1737,41 @@ begin
   putstr(c);
   crlf;
   flush;
-  st := spawn(c.s, c.len, cmdtask(c));
+  st := spawn(c.s, c.len, r50dots, cmdtask(c));
   curattr := -1;
   runline := st
+end;
+
+function mcrline(var c: str): integer;
+{ run one command line through the MCR dispatcher MCR..., as on RSX,
+  where there is no MMV task; IE.INS on P/OS, which has no MCR }
+var
+  st: integer;
+begin
+  putstr(c);
+  crlf;
+  flush;
+  st := spawn(c.s, c.len, r50mcr, r50dots);
+  curattr := -1;
+  mcrline := st
+end;
+
+procedure spawndef(var t: str);
+{ set the terminal's default directory to t: through MMV on P/OS, or
+  MCR SET /DEF on RSX, which has no MMV }
+var
+  c: str;
+  st: integer;
+begin
+  sset(c, 'MMV SET DEFAULT ');
+  sadds(c, t);
+  st := spawn(c.s, c.len, r50dots, cmdtask(c));
+  if st = ieins then
+    begin
+    sset(c, 'SET /DEF=');
+    sadds(c, t);
+    st := spawn(c.s, c.len, r50mcr, r50dots)
+    end
 end;
 
 procedure setdefault;
@@ -1743,15 +1779,12 @@ procedure setdefault;
   has no MCR SET /DEF; its MMV task (which DCL itself uses) takes
   SET DEFAULT. }
 var
-  t, c: str;
-  st: integer;
+  t: str;
 begin
   pathstr(act, t);
   if not seq(t, lastdef) then
     begin
-    sset(c, 'MMV SET DEFAULT ');
-    sadds(c, t);
-    st := spawn(c.s, c.len, cmdtask(c));
+    spawndef(t);
     lastdef := t
     end
 end;
@@ -1806,15 +1839,35 @@ begin
     end
 end;
 
+procedure taskname(var a: str; var n: str);
+{ the file name of file spec a, up to six characters, to name the task
+  that RUN installs from it }
+var
+  i, k: integer;
+begin
+  k := 1;
+  for i := 1 to a.len do
+    if (a.s[i] = ']') or (a.s[i] = ':') or (a.s[i] = '>') then k := i + 1;
+  sclr(n);
+  while (k <= a.len) and (n.len < 6) and (a.s[k] <> '.') and
+        (r50ch(a.s[k]) > 0) do
+    begin
+    saddc(n, a.s[k]);
+    k := k + 1
+    end
+end;
+
 function translate(var c: str): boolean;
 { rewrite a DCL style command line c for MMV or PIP; false if the verb
   is not one of those handled here.  precmd is set to a command to run
-  first, if any. }
+  first, if any, and mcrcmd to the command to give MCR instead on RSX,
+  which has no MMV. }
 var
   v, a, b, t, w: str;
   i, j: integer;
   done: boolean;
 begin
+  mcrcmd := c;
   i := 1;
   sclr(v);
   while (i <= c.len) and (c.s[i] = ' ') do i := i + 1;
@@ -1837,7 +1890,17 @@ begin
   if abbrev(v, 'RUN', 3) then
     begin
     sset(t, 'MMV INSTALL/RUN ');
-    sadds(t, a)
+    sadds(t, a);
+    { RUN would name the task TTnn, after the terminal, which is NC's
+      own name: give it the file name instead }
+    taskname(w, b);
+    if b.len > 0 then
+      begin
+      sset(mcrcmd, 'RUN ');
+      sadds(mcrcmd, w);
+      sadd(mcrcmd, '/TASK=');
+      sadds(mcrcmd, b)
+      end
     end
   else if abbrev(v, 'DIRECTORY', 3) then
     begin
@@ -1919,6 +1982,8 @@ begin
   crlf;
   setattr(adlg);
   if st = 1 then puts(' Press any key to return ')
+  else if st = ieins then
+    puts(' Task not installed -- press any key to return ')
   else
     begin
     puts(' Exit status ');
@@ -1933,7 +1998,8 @@ procedure execute(var c: str; pause: boolean);
 { run c through MMV or PIP (DCL style verbs) or the task named by its
   verb.  Commands that only DCL itself can run (@ files, most SHOW
   commands) are not available: DCL cannot be given a command by
-  another task. }
+  another task.  If the task is not installed (no MMV on RSX), the
+  command as typed goes to MCR instead. }
 var
   st: integer;
 begin
@@ -1944,22 +2010,23 @@ begin
   saddc(cmd, '>');
   putstr(cmd);
   sclr(cmd);
-  if (c.len > 0) and (c.s[1] = '@') then st := -2
+  if (c.len > 0) and (c.s[1] = '@') then st := notdcl
   else
     begin
     if translate(c) then ;
     st := 1;
     if precmd.len > 0 then st := runline(precmd);
-    if st = 1 then st := runline(c)
+    if st = 1 then st := runline(c);
+    if st = ieins then st := mcrline(mcrcmd)
     end;
-  if st = -2 then
+  if st = notdcl then
     begin
     crlf;
     puts('Not available from NC: no installed task takes this command,');
     crlf;
     puts('and only DCL itself can run it.')
     end;
-  if pause or (st = -2) then waitkey(st);
+  if pause or (st = notdcl) or (st = ieins) then waitkey(st);
   reload(0);
   reload(1);
   redraw
@@ -3068,11 +3135,7 @@ begin
   { leave the terminal tidy }
   oldnbr := ttnbr(oldnbr);
   if not seq(lastdef, startdef) then
-    begin                       { put the default back, for P/OS's menus }
-    sset(cmd, 'MMV SET DEFAULT ');
-    sadds(cmd, startdef);
-    exitst := spawn(cmd.s, cmd.len, cmdtask(cmd))
-    end;
+    spawndef(startdef);         { put the default back, for P/OS's menus }
   termreset;
   csi;
   puts('?7h');
