@@ -24,6 +24,7 @@ program nc(output);
     Insert Here or ^T            select / deselect file
     + - *                        select all, deselect all, invert
     ^F                           copy file name to the command line
+    ^E ^X                        previous / next command
     ^R reread   ^L redraw   ^U swap panels   Esc Esc clear command
     F1 help   F2 devices / go to   F3 view   F4 edit   F5 copy
     F6 ren/move   F7 mkdir  F8 delete  F9 sort/options  F10 quit
@@ -59,6 +60,8 @@ const
   mfdnum = 4;           { file ID of the master file directory }
   maxdev = 24;          { devices in the F2 menu }
   maxunit = 7;          { highest unit number tried for each device }
+  maxhist = 16;         { commands remembered for ^E / ^X }
+  histhi = 15;          { maxhist - 1 }
 
   { screen attributes }
   anorm = 0; acur = 1; asel = 2; acursel = 3; adir = 4; aframe = 5;
@@ -134,6 +137,10 @@ var
   color: boolean;
   quit: boolean;
   cmd: str;                     { command line }
+  hist: array [0..histhi] of str;      { past commands, a ring }
+  hn: integer;                  { commands in hist }
+  htop: integer;                { slot for the next command }
+  hpos: integer;                { 1 = latest shown by ^E, 0 = none }
   lastdef: str;                 { last directory given to SET /DEF }
   startdef: str;                { default directory when NC started }
   precmd: str;                  { run before a translated command }
@@ -158,6 +165,7 @@ function ttgetc: integer; external;
 procedure ttput(var b: outbuf; len: integer); external;
 procedure ttsize(var w, h: integer); external;
 function ttnbr(val: integer): integer; external;
+function ttunit: integer; external;
 function fsalun(dev, unit: integer): integer; external;
 procedure fsglun(var dev, unit: integer); external;
 function fsqio(fn: integer; var f: fnblock; code, size: integer;
@@ -1840,21 +1848,35 @@ begin
 end;
 
 procedure taskname(var a: str; var n: str);
-{ the file name of file spec a, up to six characters, to name the task
-  that RUN installs from it }
+{ the name for the task that RUN installs from file spec a: up to four
+  characters of the file name and the terminal unit in octal, as RUN
+  itself names it TTnn.  NC.TSK on TT12: runs as NC12, which does not
+  clash with a task installed under the file's own name, or with NC
+  started by RUN, which is TT12 }
 var
-  i, k: integer;
+  i, k, u, d: integer;
+  o: str;
 begin
   k := 1;
   for i := 1 to a.len do
     if (a.s[i] = ']') or (a.s[i] = ':') or (a.s[i] = '>') then k := i + 1;
   sclr(n);
-  while (k <= a.len) and (n.len < 6) and (a.s[k] <> '.') and
+  sclr(o);
+  u := ttunit;
+  repeat
+    d := u mod 8;
+    u := u div 8;
+    saddc(o, chr(ord('0') + d))
+  until u = 0;
+  if o.len < 2 then saddc(o, '0');
+  while (k <= a.len) and (n.len < 6 - o.len) and (a.s[k] <> '.') and
         (r50ch(a.s[k]) > 0) do
     begin
     saddc(n, a.s[k]);
     k := k + 1
-    end
+    end;
+  if n.len > 0 then
+    for i := o.len downto 1 do saddc(n, o.s[i])
 end;
 
 function translate(var c: str): boolean;
@@ -2725,7 +2747,7 @@ begin
   l(5, 'Return/Do enter directory / run .TSK / view file');
   l(6, '          or execute the typed command line');
   l(7, 'Insert ^T select file        + - *  select all/none/invert');
-  l(8, '^F        put file name on the command line');
+  l(8, '^F        put file name on the command line   ^E ^X  history');
   l(9, '^R        reread directory   ^L  redraw   Esc Esc  clear line');
   l(11, 'F1 Help     F2 Device/dir   F3 View    F4 Edit (EDT)');
   l(12, 'F5 Copy     F6 Rename/Move  F7 Mkdir   F8 Delete');
@@ -2892,6 +2914,33 @@ begin
   drawrow(old, pan[old].cur);
   drawtitle(act);
   drawrow(act, pan[act].cur)
+end;
+
+procedure addhist(var c: str);
+{ remember c unless it repeats the latest command }
+var
+  last: integer;
+begin
+  hpos := 0;
+  last := (htop + maxhist - 1) mod maxhist;
+  if (hn = 0) or not seq(c, hist[last]) then
+    begin
+    hist[htop] := c;
+    htop := (htop + 1) mod maxhist;
+    if hn < maxhist then hn := hn + 1
+    end
+end;
+
+procedure recall(d: integer);
+{ ^E (d = 1) steps back through the history, ^X (d = -1) forward;
+  stepping forward past the latest command clears the line }
+begin
+  if (hpos + d >= 0) and (hpos + d <= hn) then
+    begin
+    hpos := hpos + d;
+    if hpos = 0 then sclr(cmd)
+    else cmd := hist[(htop + maxhist - hpos) mod maxhist]
+    end
 end;
 
 procedure nametocmd;
@@ -3072,6 +3121,7 @@ begin
     if cmd.len > 0 then
       begin
       t := cmd;
+      addhist(t);
       execute(t, true)
       end
     else enter
@@ -3080,8 +3130,14 @@ begin
     begin
     if cmd.len > 0 then cmd.len := cmd.len - 1
     end
-  else if (k = kesc) or (k = 3) then sclr(cmd)
+  else if (k = kesc) or (k = 3) then
+    begin
+    sclr(cmd);
+    hpos := 0
+    end
   else if k = 6 then nametocmd
+  else if k = 5 then recall(1)
+  else if k = 24 then recall(-1)
   else if k = 18 then
     begin
     reload(act);
@@ -3126,6 +3182,9 @@ begin
   quit := false;
   act := 0;
   sclr(cmd);
+  hn := 0;
+  htop := 0;
+  hpos := 0;
   ttinit;
   oldnbr := ttnbr(1);           { no broadcast messages while we run }
   setsize;

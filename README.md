@@ -74,6 +74,9 @@ name:
 ESC followed by a digit also selects a function: ESC 1 is F1, ESC 0 is
 F10.
 
+On the command line, ^E recalls the previous command and ^X the next;
+the last 16 commands are kept.
+
 ## Commands
 
 P/OS has no MCR, and DCL does not accept commands from another task.

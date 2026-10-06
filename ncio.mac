@@ -8,7 +8,7 @@
 ; Task build with UNITS=16 (LUNs 13-15 are used here).
 ;
         .include /SY:[PAS]PASMAC.MAC/
-; Terminal:     ttinit, ttgetc, ttput, ttsize, ttnbr
+; Terminal:     ttinit, ttgetc, ttput, ttsize, ttnbr, ttunit
 ; Files-11:     fsalun, fsglun, fsqio
 ; File reading: vopen, vget, vclose
 ; Misc:         r50asc, spawn, gtime
@@ -144,6 +144,19 @@ vwfdb:  fdbdf$
         mov     r0,res(sp)
         movb    val(sp),nbrbuf+1
         qiow$s  #sf.smc,#ttlun,#ttefn,,#iosb,,<#nbrbuf,#2>
+        endpr
+
+;
+; function ttunit: integer;
+; Unit number of the terminal (12 for TT12:).
+;
+        func    ttunit,res,integer
+        save    <r0>
+        begin
+        glun$s  #ttlun,#glbuf
+        movb    glbuf+2,r0
+        bic     #177400,r0
+        mov     r0,res(sp)
         endpr
 
 ;
